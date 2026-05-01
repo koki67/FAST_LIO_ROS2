@@ -85,6 +85,10 @@ void Preprocess::process(const sensor_msgs::msg::PointCloud2::UniquePtr &msg, Po
       mid360_handler(msg);
       break;
 
+    case HESAI:
+      hesai_handler(msg);
+      break;
+
     default:
       default_handler(msg);
       break;
@@ -553,6 +557,64 @@ void Preprocess::mid360_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &
     {
       pl_surf.push_back(std::move(added_pt));
     }
+  }
+}
+
+void Preprocess::hesai_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg)
+{
+  // Hesai PandarXT-16 driver publishes points as
+  //   (float x, y, z, float intensity, double timestamp, uint16_t ring)
+  // where `timestamp` is the absolute per-point capture time in seconds
+  // (Unix epoch). FAST-LIO expects `curvature` to be the per-point time
+  // offset relative to the start of the scan, in milliseconds.
+  pl_surf.clear();
+  pl_corn.clear();
+  pl_full.clear();
+
+  pcl::PointCloud<hesai_ros::Point> pl_orig;
+  pcl::fromROSMsg(*msg, pl_orig);
+  int plsize = pl_orig.points.size();
+  if (plsize == 0)
+    return;
+  pl_surf.reserve(plsize);
+
+  // Use the earliest point timestamp as the scan-start reference. Hesai packets
+  // are not strictly ordered, so taking points[0] is not always the minimum.
+  double scan_start_time = pl_orig.points[0].timestamp;
+  for (int i = 1; i < plsize; ++i)
+  {
+    if (pl_orig.points[i].timestamp < scan_start_time)
+      scan_start_time = pl_orig.points[i].timestamp;
+  }
+  given_offset_time = true;
+
+  for (int i = 0; i < plsize; ++i)
+  {
+    if (i % point_filter_num != 0)
+      continue;
+
+    double range = pl_orig.points[i].x * pl_orig.points[i].x +
+                   pl_orig.points[i].y * pl_orig.points[i].y +
+                   pl_orig.points[i].z * pl_orig.points[i].z;
+    if (range < (blind * blind))
+      continue;
+
+    if (pl_orig.points[i].ring >= N_SCANS)
+      continue;
+
+    PointType added_pt;
+    added_pt.x = pl_orig.points[i].x;
+    added_pt.y = pl_orig.points[i].y;
+    added_pt.z = pl_orig.points[i].z;
+    added_pt.intensity = pl_orig.points[i].intensity;
+    added_pt.normal_x = 0;
+    added_pt.normal_y = 0;
+    added_pt.normal_z = 0;
+    // curvature unit: ms (relative to scan start)
+    added_pt.curvature =
+        static_cast<float>((pl_orig.points[i].timestamp - scan_start_time) * 1000.0);
+
+    pl_surf.points.push_back(added_pt);
   }
 }
 

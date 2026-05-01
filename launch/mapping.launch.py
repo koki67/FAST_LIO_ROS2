@@ -19,6 +19,8 @@ def generate_launch_description():
     use_sim_time = LaunchConfiguration('use_sim_time')
     config_path = LaunchConfiguration('config_path')
     config_file = LaunchConfiguration('config_file')
+    pointcloud_topic = LaunchConfiguration('pointcloud_topic')
+    imu_topic = LaunchConfiguration('imu_topic')
     rviz_use = LaunchConfiguration('rviz')
     rviz_cfg = LaunchConfiguration('rviz_cfg')
 
@@ -34,6 +36,19 @@ def generate_launch_description():
         'config_file', default_value='mid360.yaml',
         description='Config file'
     )
+    # The two topic args below default to the canonical Hesai+GO2-W topics so
+    # `config_file:=go2w.yaml` works out of the box. For any other yaml, pass
+    # the matching `pointcloud_topic:=...` and `imu_topic:=...` to override the
+    # defaults declared here. These overrides always take precedence over the
+    # `common.lid_topic` / `common.imu_topic` keys loaded from the yaml.
+    declare_pointcloud_topic_cmd = DeclareLaunchArgument(
+        'pointcloud_topic', default_value='/points_raw',
+        description='LiDAR PointCloud2 topic (overrides common.lid_topic from yaml)'
+    )
+    declare_imu_topic_cmd = DeclareLaunchArgument(
+        'imu_topic', default_value='/go2w/imu',
+        description='IMU topic (overrides common.imu_topic from yaml)'
+    )
     declare_rviz_cmd = DeclareLaunchArgument(
         'rviz', default_value='true',
         description='Use RViz to monitor results'
@@ -46,8 +61,13 @@ def generate_launch_description():
     fast_lio_node = Node(
         package='fast_lio',
         executable='fastlio_mapping',
+        # Parameter sources are merged in order; entries later in the list
+        # override entries earlier in the list, so the dict at the end wins
+        # over the values loaded from the yaml file.
         parameters=[PathJoinSubstitution([config_path, config_file]),
-                    {'use_sim_time': use_sim_time}],
+                    {'use_sim_time': use_sim_time,
+                     'common.lid_topic': pointcloud_topic,
+                     'common.imu_topic': imu_topic}],
         output='screen'
     )
     rviz_node = Node(
@@ -61,6 +81,8 @@ def generate_launch_description():
     ld.add_action(declare_use_sim_time_cmd)
     ld.add_action(declare_config_path_cmd)
     ld.add_action(declare_config_file_cmd)
+    ld.add_action(declare_pointcloud_topic_cmd)
+    ld.add_action(declare_imu_topic_cmd)
     ld.add_action(declare_rviz_cmd)
     ld.add_action(declare_rviz_config_path_cmd)
 

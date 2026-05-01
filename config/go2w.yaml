@@ -1,0 +1,53 @@
+/**:
+    ros__parameters:
+        feature_extract_enable: false
+        point_filter_num: 4
+        max_iteration: 3
+        filter_size_surf: 0.5
+        filter_size_map: 0.5
+        cube_side_length: 1000.0
+        runtime_pos_log_enable: false
+        map_file_path: "./scans.pcd"
+
+        common:
+            lid_topic:  "/points_raw"
+            imu_topic:  "/go2w/imu"
+            time_sync_en: false           # ONLY turn on when external time sync is not possible
+            time_offset_lidar_to_imu: 0.0
+
+        preprocess:
+            lidar_type: 5                 # 5 = HESAI (added in this fork; see preprocess.h)
+            scan_line: 16                 # PandarXT-16
+            scan_rate: 10                 # Hz
+            timestamp_unit: 1             # ms (the hesai_handler converts absolute Hesai timestamps
+                                          # into per-point ms offsets stored in `curvature`, so the
+                                          # downstream time_unit_scale must be 1.0)
+            blind: 0.5                    # ignore returns closer than 0.5 m
+
+        mapping:
+            acc_cov: 0.1
+            gyr_cov: 0.1
+            b_acc_cov: 0.0001
+            b_gyr_cov: 0.0001
+            fov_degree:    360.0
+            det_range:     100.0
+            extrinsic_est_en:  false      # disable online IMU-LiDAR extrinsic estimation; we trust calibration
+            # T_imu_lidar derived from config/sensor/go2w_calibration.yaml in slam-go2w:
+            #   T_baselink_imu : t = [0, 0, 0],            R = Rz(+90deg)
+            #   T_baselink_lidar: t = [0.1634, 0, 0.116],  R = Rz(+90deg)
+            #   T_imu_lidar = T_baselink_imu^-1 * T_baselink_lidar
+            #     -> R = I, t = Rz(-90deg) * [0.1634, 0, 0.116] = [0, -0.1634, 0.116]
+            extrinsic_T: [ 0.0, -0.1634, 0.116 ]
+            extrinsic_R: [ 1.0, 0.0, 0.0,
+                           0.0, 1.0, 0.0,
+                           0.0, 0.0, 1.0 ]
+
+        publish:
+            path_en:  true
+            scan_publish_en:  true        # false: close all the point cloud output
+            dense_publish_en: true        # false: low down the points number in a global-frame point clouds scan
+            scan_bodyframe_pub_en: true   # true: output the point cloud scans in IMU-body-frame
+
+        pcd_save:
+            pcd_save_en: false
+            interval: -1

@@ -35,6 +35,7 @@
 #include <omp.h>
 #include <mutex>
 #include <math.h>
+#include <new>
 #include <thread>
 #include <fstream>
 #include <csignal>
@@ -943,6 +944,7 @@ public:
         map_pub_timer_ = rclcpp::create_timer(this, this->get_clock(), map_period_ms, std::bind(&LaserMappingNode::map_publish_callback, this));
 
         map_save_srv_ = this->create_service<std_srvs::srv::Trigger>("map_save", std::bind(&LaserMappingNode::map_save_callback, this, std::placeholders::_1, std::placeholders::_2));
+        reset_srv_ = this->create_service<std_srvs::srv::Trigger>("reset", std::bind(&LaserMappingNode::reset_callback, this, std::placeholders::_1, std::placeholders::_2));
 
         RCLCPP_INFO(this->get_logger(), "Node init finished.");
     }
@@ -1128,6 +1130,71 @@ private:
         }
     }
 
+    // Clears every piece of accumulated state so a subsequent ros2 bag play
+    // starts from a clean slate. This mirrors D-LIO's ResetMap.srv and is what
+    // slam-go2w's offline reconstruct_raw.sh script invokes between runs to
+    // prevent leftover map / trajectory artifacts from one playback corrupting
+    // the next.
+    void reset_callback(std_srvs::srv::Trigger::Request::ConstSharedPtr /*req*/,
+                        std_srvs::srv::Trigger::Response::SharedPtr res)
+    {
+        RCLCPP_WARN(this->get_logger(), "Resetting FAST-LIO state...");
+
+        {
+            std::lock_guard<std::mutex> lock(mtx_buffer);
+            lidar_buffer.clear();
+            imu_buffer.clear();
+            time_buffer.clear();
+        }
+
+        // IMU init / buffers / mean accel/gyro
+        p_imu->Reset();
+
+        // Re-arm initialization flags so the next packet rebuilds first-scan state
+        flg_first_scan = true;
+        flg_EKF_inited = false;
+        is_first_lidar = true;
+        lidar_pushed = false;
+        Localmap_Initialized = false;
+        first_lidar_time = 0.0;
+        last_timestamp_lidar = 0;
+        last_timestamp_imu = -1.0;
+        frame_num = 0;
+        scan_count = 0;
+        publish_count = 0;
+        scan_num = 0;
+        lidar_mean_scantime = 0.0;
+        timediff_set_flg = false;
+        timediff_lidar_wrt_imu = 0.0;
+
+        // Trajectory / pose history
+        path.poses.clear();
+
+        // Re-initialize the iterated EKF state (zeroes pose, velocity, biases).
+        std::fill(epsi, epsi + 23, 0.001);
+        kf.init_dyn_share(get_f, df_dx, df_dw, h_share_model, NUM_MAX_ITERATIONS, epsi);
+
+        // Re-apply IMU/LiDAR extrinsics + covariances to the freshly-initialized filter.
+        p_imu->set_extrinsic(Lidar_T_wrt_IMU, Lidar_R_wrt_IMU);
+        p_imu->set_gyr_cov(V3D(gyr_cov, gyr_cov, gyr_cov));
+        p_imu->set_acc_cov(V3D(acc_cov, acc_cov, acc_cov));
+        p_imu->set_gyr_bias_cov(V3D(b_gyr_cov, b_gyr_cov, b_gyr_cov));
+        p_imu->set_acc_bias_cov(V3D(b_acc_cov, b_acc_cov, b_acc_cov));
+
+        // Tear down and rebuild the incremental KD-Tree in place. The destructor
+        // walks Root_Node and frees nodes; placement-new constructs a fresh empty
+        // tree in the same memory so all globals referencing `ikdtree` stay valid.
+        ikdtree.~KD_TREE();
+        new (&ikdtree) KD_TREE<PointType>();
+
+        // Wake any waiters on sig_buffer so they don't spin on stale predicates.
+        sig_buffer.notify_all();
+
+        res->success = true;
+        res->message = "FAST-LIO state reset.";
+        RCLCPP_INFO(this->get_logger(), "FAST-LIO reset complete.");
+    }
+
 private:
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloudFull_;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloudFull_body_;
@@ -1143,6 +1210,7 @@ private:
     rclcpp::TimerBase::SharedPtr timer_;
     rclcpp::TimerBase::SharedPtr map_pub_timer_;
     rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr map_save_srv_;
+    rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr reset_srv_;
 
     bool effect_pub_en = false, map_pub_en = false;
     int effect_feat_num = 0, frame_num = 0;
