@@ -3,11 +3,13 @@ import os.path
 from ament_index_python.packages import get_package_share_directory
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch.conditions import IfCondition
 
 from launch_ros.actions import Node
+from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
@@ -58,6 +60,17 @@ def generate_launch_description():
         description='RViz config file path'
     )
 
+    hesai_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([
+            PathJoinSubstitution([FindPackageShare('hesai_lidar'), 'launch', 'hesai_lidar_launch.py'])
+        ])
+    )
+    imu_publisher_node = Node(
+        package='go2w_imu_publisher',
+        executable='imu_publisher',
+        output='screen',
+    )
+
     fast_lio_node = Node(
         package='fast_lio',
         executable='fastlio_mapping',
@@ -86,6 +99,8 @@ def generate_launch_description():
     ld.add_action(declare_rviz_cmd)
     ld.add_action(declare_rviz_config_path_cmd)
 
+    ld.add_action(hesai_launch)
+    ld.add_action(imu_publisher_node)
     ld.add_action(fast_lio_node)
     ld.add_action(rviz_node)
 
